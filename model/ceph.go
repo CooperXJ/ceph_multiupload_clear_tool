@@ -1,9 +1,10 @@
 package model
 
 type CephInfo struct {
-	CephEndPoint      string
-	AK        		  string
-	SK                string
+	CephEndPoint string
+	Port         string
+	AK           string
+	SK           string
 }
 
 type BucketStats struct {
