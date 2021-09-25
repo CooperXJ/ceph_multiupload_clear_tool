@@ -19,7 +19,6 @@ func init() {
 	cleanCmd.MarkFlagRequired("sk")
 
 	cleanCmd.Flags().StringP("bucket", "", "", "bucket（required）")
-	cleanCmd.MarkFlagRequired("bucket")
 
 	cleanCmd.Flags().StringP("key", "", "", "fileName")
 }
@@ -29,6 +28,12 @@ var cleanCmd = &cobra.Command{
 	Short: "清理废弃的分段上传",
 	Long:  `cephtool clean --ep 127.0.0.1 --ak xxxx --sk xxxxx`,
 	Run: func(cmd *cobra.Command, args []string) {
+		// 捕获异常
+		defer func() {
+			if r := recover(); r != nil {
+			}
+		}()
+
 		endpoint, err := cmd.Flags().GetString("endpoint")
 		if err != nil || net.ParseIP(endpoint) == nil {
 			fmt.Println("请检查IP输入")
@@ -44,12 +49,6 @@ var cleanCmd = &cobra.Command{
 		sk, err := cmd.Flags().GetString("sk")
 		if err != nil {
 			fmt.Println("请检查sk输入")
-			return
-		}
-
-		bucket, err := cmd.Flags().GetString("bucket")
-		if err != nil {
-			fmt.Println("请检查bucket输入")
 			return
 		}
 
@@ -72,31 +71,67 @@ var cleanCmd = &cobra.Command{
 			SK:           sk,
 		}
 
+		bucket, err := cmd.Flags().GetString("bucket")
+		if err != nil {
+			fmt.Println("请检查bucket输入")
+			return
+		}
+
+		uploadIdMap := make(map[string]string, 2)
 		conn, err := ceph.GetCephConn(cephInfo)
 		if err != nil || ceph.TestIfValid(bucket, conn) != nil {
-			fmt.Println("无法通过验证，请检查endpoint、ak、sk")
+			fmt.Println("无法通过验证，请检查endpoint、ak、sk或者bucket不属于该用户")
 			fmt.Println(err.Error())
 			return
 		}
 
-		uploadIdMap, err := ceph.GetUselessUploadId(bucket, key, "", -1)
-		if err != nil {
-			fmt.Println("无法找到该桶内相关分段上传Id")
-			return
-		}
-
-		fmt.Printf("需要清理的分段上传如下：\n")
-		for k, v := range uploadIdMap {
-			fmt.Printf("%s=>%s\n", k, v)
-		}
-
-		for uploadId, key := range uploadIdMap {
-			err := ceph.CancelMultiUploadByKey(bucket, key, uploadId, conn)
+		if bucket == "" {
+			bucketNameList, err := ceph.GetAllBucket(conn)
 			if err != nil {
-				fmt.Printf("清理%s文件的分段上传%s失败\n", key, uploadId)
 				fmt.Println(err.Error())
-			} else {
-				fmt.Printf("清理%s文件的分段上传%s成功!!!\n", key, uploadId)
+			}
+
+			for _, bucket := range bucketNameList {
+				uploadIdMap, err = ceph.GetUselessUploadId(bucket, key, "", -1)
+				if err != nil {
+					fmt.Printf("无法找到桶%v相关分段上传Id\n", bucket)
+				} else {
+					fmt.Printf("桶%v需要清理的分段上传如下：\n", bucket)
+					for k, v := range uploadIdMap {
+						fmt.Printf("%s=>%s\n", k, v)
+					}
+
+					for uploadId, key := range uploadIdMap {
+						err := ceph.CancelMultiUploadByKey(bucket, key, uploadId, conn)
+						if err != nil {
+							fmt.Printf("清理%s文件的分段上传%s失败\n", key, uploadId)
+							fmt.Println(err.Error())
+						} else {
+							fmt.Printf("清理%s文件的分段上传%s成功!!!\n", key, uploadId)
+						}
+					}
+				}
+			}
+		} else {
+			uploadIdMap, err = ceph.GetUselessUploadId(bucket, key, "", -1)
+			if err != nil {
+				fmt.Println("无法找到该桶内相关分段上传Id")
+				return
+			}
+
+			fmt.Printf("需要清理的分段上传如下：\n")
+			for k, v := range uploadIdMap {
+				fmt.Printf("%s=>%s\n", k, v)
+			}
+
+			for uploadId, key := range uploadIdMap {
+				err := ceph.CancelMultiUploadByKey(bucket, key, uploadId, conn)
+				if err != nil {
+					fmt.Printf("清理%s文件的分段上传%s失败\n", key, uploadId)
+					fmt.Println(err.Error())
+				} else {
+					fmt.Printf("清理%s文件的分段上传%s成功!!!\n", key, uploadId)
+				}
 			}
 		}
 	},

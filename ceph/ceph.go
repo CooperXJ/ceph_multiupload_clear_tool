@@ -46,18 +46,43 @@ func CancelMultiUploadByKey(bucket string, key string, uploadId string, cephClie
 	return nil
 }
 
-// TestIfValid 通过list bucket操作查看是否账号密码正确
+// TestIfValid 通过list bucket操作查看是否账号密码正确以及当前用户是否包含该bucket
 func TestIfValid(bucket string, cephClient *s3.S3) error {
 	out, err := cephClient.ListBuckets(nil)
 	if err != nil {
 		return errors.New("内部错误")
 	}
 
-	for _, temp := range out.Buckets {
-		if (*temp.Name) == bucket {
+	if bucket != "" {
+		for _, temp := range out.Buckets {
+			if (*temp.Name) == bucket {
+				return nil
+			}
+		}
+	} else {
+		bucketList := make([]string, 0)
+		for _, temp := range out.Buckets {
+			bucketList = append(bucketList, *temp.Name)
+		}
+		if len(bucketList) > 0 {
 			return nil
 		}
 	}
 
 	return errors.New("账号密码错误或不存在该bucket")
+}
+
+// GetAllBucket 获取用户的所有bucket
+func GetAllBucket(cephClient *s3.S3) ([]string, error) {
+	out, err := cephClient.ListBuckets(nil)
+	if err != nil {
+		return nil, errors.New("账号密码错误")
+	}
+
+	bucketList := make([]string, 0)
+	for _, temp := range out.Buckets {
+		bucketList = append(bucketList, *temp.Name)
+	}
+
+	return bucketList, nil
 }
