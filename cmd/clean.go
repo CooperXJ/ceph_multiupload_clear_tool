@@ -21,6 +21,8 @@ func init() {
 	cleanCmd.Flags().StringP("bucket", "", "", "bucket（required）")
 
 	cleanCmd.Flags().StringP("key", "", "", "fileName")
+
+	cleanCmd.Flags().StringP("pool", "", "", "rgw pool")
 }
 
 var cleanCmd = &cobra.Command{
@@ -64,6 +66,12 @@ var cleanCmd = &cobra.Command{
 			return
 		}
 
+		pool, err := cmd.Flags().GetString("pool")
+		if err != nil {
+			fmt.Println("请检查输入的port")
+			return
+		}
+
 		cephInfo := &model.CephInfo{
 			CephEndPoint: endpoint,
 			Port:         port,
@@ -92,7 +100,7 @@ var cleanCmd = &cobra.Command{
 			}
 
 			for _, bucket := range bucketNameList {
-				uploadIdMap, err = ceph.GetUselessUploadId(bucket, key, "", -1)
+				uploadIdMap, err = ceph.GetUselessUploadId(bucket, key, pool, -1)
 				if err != nil {
 					fmt.Printf("无法找到桶%v相关分段上传Id\n", bucket)
 				} else {
@@ -113,7 +121,7 @@ var cleanCmd = &cobra.Command{
 				}
 			}
 		} else {
-			uploadIdMap, err = ceph.GetUselessUploadId(bucket, key, "", -1)
+			uploadIdMap, err = ceph.GetUselessUploadId(bucket, key, pool, -1)
 			if err != nil {
 				fmt.Println("无法找到该桶内相关分段上传Id")
 				return
