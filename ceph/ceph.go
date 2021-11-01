@@ -2,6 +2,7 @@ package ceph
 
 import (
 	"ceph_multiupload_clear_tool/model"
+	"context"
 	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
@@ -9,6 +10,8 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 )
+
+const SIZE int64 = 1024 * 1024 * 15 //15M
 
 //GetCephConn 获取连接
 func GetCephConn(cephInfo *model.CephInfo) (*s3.S3, error) {
@@ -85,4 +88,50 @@ func GetAllBucket(cephClient *s3.S3) ([]string, error) {
 	}
 
 	return bucketList, nil
+}
+
+func ListObjects(cephClient *s3.S3, bucket string) ([]*s3.Object, error) {
+	inputs := &s3.ListObjectsInput{
+		Bucket: aws.String(bucket),
+	}
+
+	objects, err := cephClient.ListObjects(inputs)
+	if err != nil {
+		fmt.Printf("无法%v下的找到objects,err = %v\n", bucket, err.Error())
+		return nil, err
+	}
+
+	return objects.Contents, nil
+}
+
+func UploadBySize() {
+
+}
+
+func TransferBucket(sourceCephInfo, targetCephInfo *model.CephInfo, sourceBucket, targetBucket string) error {
+	sClient, err := GetCephConn(sourceCephInfo)
+	if err != nil {
+		fmt.Println("无法与源端建立连接")
+		return err
+	}
+
+	tClient, err := GetCephConn(targetCephInfo)
+	if err != nil {
+		fmt.Println("无法与目标端建立连接")
+		return err
+	}
+
+	sObjects, err := ListObjects(sClient, sourceBucket)
+	if err != nil {
+		fmt.Println("无法下载源端objects")
+		return err
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	for index, obj := range sObjects {
+		if (*obj.Size) <= SIZE {
+			inputs :=
+				tClient.PutObject()
+		}
+	}
 }
