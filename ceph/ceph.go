@@ -7,11 +7,15 @@ import (
 	"fmt"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"io"
+	"math"
 )
 
-const SIZE int64 = 1024 * 1024 * 15 //15M
+const SIZE int64 = 1024 * 1024 * 5        //15M
+const PART_SIZE int64 = 1024 * 1024 * 100 //15M
 
 //GetCephConn 获取连接
 func GetCephConn(cephInfo *model.CephInfo) (*s3.S3, error) {
@@ -104,8 +108,110 @@ func ListObjects(cephClient *s3.S3, bucket string) ([]*s3.Object, error) {
 	return objects.Contents, nil
 }
 
-func UploadBySize() {
+func UploadBySize(cephClient *s3.S3, key string, size int64, bucket string, body io.ReadSeeker, ctx context.Context) error {
+	if size <= SIZE {
+		input := &s3.PutObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+			Body:   body,
+		}
+		_, err := cephClient.PutObject(input)
+		if err != nil {
+			fmt.Printf("%v无法上传，err=%v\n", key, err.Error())
+			return err
+		}
+		fmt.Printf("%v上传成功\n", key)
+		return nil
+	} else {
+		input := &s3.CreateMultipartUploadInput{
+			Bucket:             aws.String(bucket),
+			ContentDisposition: nil,
+			Key:                aws.String(key),
+			Metadata:           nil,
+		}
+		_, out := cephClient.CreateMultipartUploadRequest(input)
 
+		// 划分part
+		partCnt := int(math.Ceil(float64(size / PART_SIZE)))
+		parts := make([]*s3.CompletedPart, partCnt)
+		for i := 0; i < partCnt; i++ {
+			upload := &s3.UploadPartInput{
+				Body:          body,
+				Bucket:        aws.String(bucket),
+				ContentLength: aws.Int64(size),
+				Key:           aws.String(key),
+				PartNumber:    nil,
+				UploadId:      out.UploadId,
+			}
+
+			partUploadRes, err := cephClient.UploadPart(upload)
+			if err != nil {
+				return err
+			}
+
+			parts[i] = &s3.CompletedPart{
+				ETag:       partUploadRes.ETag,
+				PartNumber: aws.Int64(int64(i)),
+			}
+		}
+
+		uploads := &s3.CompletedMultipartUpload{Parts: parts}
+
+		cinput := &s3.CompleteMultipartUploadInput{
+			Bucket:          aws.String(bucket),
+			Key:             aws.String(key),
+			MultipartUpload: uploads,
+			UploadId:        nil,
+		}
+		_, err := cephClient.CompleteMultipartUpload(cinput)
+		if err != nil {
+			fmt.Printf("%v无法分段上传,err=%v\n", key, err.Error())
+			abortInputs := &s3.AbortMultipartUploadInput{
+				Bucket:   aws.String(bucket),
+				Key:      aws.String(key),
+				UploadId: out.UploadId,
+			}
+			_, err := cephClient.AbortMultipartUpload(abortInputs)
+			if err != nil {
+				fmt.Printf("%v无法取消上传,err=%v\n", key, err.Error())
+				return err
+			}
+			return err
+		}
+
+	loop:
+		for {
+			select {
+			case <-ctx.Done():
+				abortInputs := &s3.AbortMultipartUploadInput{
+					Bucket:   aws.String(bucket),
+					Key:      aws.String(key),
+					UploadId: out.UploadId,
+				}
+				_, err := cephClient.AbortMultipartUpload(abortInputs)
+				if err != nil {
+					fmt.Printf("%v无法取消上传,err=%v\n", key, err.Error())
+					return err
+				}
+				break loop
+			}
+		}
+		return nil
+	}
+}
+
+func GetObject(cephClient *s3.S3, key string, bucket string) (io.ReadCloser, error) {
+	input := &s3.GetObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	}
+	object, err := cephClient.GetObject(input)
+	if err != nil {
+		fmt.Printf("%v无法下载\n", key)
+		return nil, err
+	}
+
+	return object.Body, nil
 }
 
 func TransferBucket(sourceCephInfo, targetCephInfo *model.CephInfo, sourceBucket, targetBucket string) error {
@@ -129,9 +235,17 @@ func TransferBucket(sourceCephInfo, targetCephInfo *model.CephInfo, sourceBucket
 
 	ctx, cancel := context.WithCancel(context.Background())
 	for index, obj := range sObjects {
-		if (*obj.Size) <= SIZE {
-			inputs :=
-				tClient.PutObject()
-		}
+		go func(ctx context.Context) error {
+			body, err := GetObject(sClient, *obj.Key, sourceBucket)
+			if err != nil {
+				return err
+			}
+
+			err = UploadBySize(tClient, *obj.Key, *obj.Size, targetBucket, io.ReadSeeker(body), ctx)
+			if err != nil {
+				return err
+			}
+			return nil
+		}(ctx)
 	}
 }
