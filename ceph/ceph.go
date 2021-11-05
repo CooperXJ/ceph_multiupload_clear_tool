@@ -15,8 +15,9 @@ import (
 	"sync"
 )
 
-const SIZE int64 = 1024 * 1024 * 15      //15M
-const PART_SIZE int64 = 1024 * 1024 * 10 //15M
+const SIZE int64 = 1024 * 1024 * 15        //15M
+const PART_SIZE int64 = 1024 * 1024 * 10   //15M
+const GIANT_SIZE int64 = 1024 * 1024 * 300 //1G
 
 //GetCephConn 获取连接
 func GetCephConn(cephInfo *model.CephInfo) (*s3.S3, error) {
@@ -122,7 +123,7 @@ func UploadBySize(cephClient *s3.S3, key string, size int64, bucket string, body
 			return err
 		}
 		return nil
-	} else {
+	} else if size < GIANT_SIZE {
 		syncChan := make(chan struct{}, 1)
 
 		input := &s3.CreateMultipartUploadInput{
@@ -216,6 +217,13 @@ func UploadBySize(cephClient *s3.S3, key string, size int64, bucket string, body
 
 		syncChan <- struct{}{}
 		return nil
+	} else {
+		err := UploadGiantFile(cephClient, key, size, bucket, ctx)
+		if err != nil {
+			fmt.Printf("无法上传%v,err = %v\n", key, err.Error())
+			return err
+		}
+		return nil
 	}
 }
 
@@ -284,8 +292,15 @@ func UploadGiantFile(cephClient *s3.S3, key string, size int64, bucket string, c
 			partSize = size - cur
 		}
 
+		//一部分一部分的进行获取
+		body, err := GetPartFile(cephClient, key, bucket, cur, cur+partSize)
+		if err != nil {
+			fmt.Printf("无法获取到%v中的%v-%v的部分\n", key, cur, cur+partSize)
+			return err
+		}
+
 		upload := &s3.UploadPartInput{
-			Body:          bytes.NewReader(body[cur : cur+partSize]),
+			Body:          bytes.NewReader(body),
 			Bucket:        aws.String(bucket),
 			Key:           aws.String(key),
 			PartNumber:    aws.Int64(int64(i) + 1),
