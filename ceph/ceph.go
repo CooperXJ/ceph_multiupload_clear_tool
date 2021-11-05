@@ -15,9 +15,10 @@ import (
 	"sync"
 )
 
-const SIZE int64 = 1024 * 1024 * 15        //15M
-const PART_SIZE int64 = 1024 * 1024 * 10   //15M
-const GIANT_SIZE int64 = 1024 * 1024 * 300 //1G
+const SIZE int64 = 1024 * 1024 * 50             //15M
+const PART_SIZE int64 = 1024 * 1024 * 10        //15M
+const GIANT_SIZE int64 = 1024 * 1024 * 1000     //1G
+const GIANT_PART_SIZE int64 = 1024 * 1024 * 200 //200G
 
 //GetCephConn 获取连接
 func GetCephConn(cephInfo *model.CephInfo) (*s3.S3, error) {
@@ -286,9 +287,9 @@ func UploadGiantFile(source *s3.S3, target *s3.S3, key string, size int64, bucke
 	parts := make([]*s3.CompletedPart, partCnt)
 
 	var cur int64 = 0
-	var partSize = PART_SIZE
+	var partSize = GIANT_PART_SIZE
 	for i := 0; i < partCnt; i++ {
-		if (cur + PART_SIZE) > size {
+		if (cur + GIANT_PART_SIZE) > size {
 			partSize = size - cur
 		}
 
@@ -300,12 +301,11 @@ func UploadGiantFile(source *s3.S3, target *s3.S3, key string, size int64, bucke
 		}
 
 		upload := &s3.UploadPartInput{
-			Body:          bytes.NewReader(body),
-			Bucket:        aws.String(bucket),
-			Key:           aws.String(key),
-			PartNumber:    aws.Int64(int64(i) + 1),
-			UploadId:      out.UploadId,
-			ContentLength: aws.Int64(partSize),
+			Body:       bytes.NewReader(body),
+			Bucket:     aws.String(bucket),
+			Key:        aws.String(key),
+			PartNumber: aws.Int64(int64(i) + 1),
+			UploadId:   out.UploadId,
 		}
 
 		partUploadRes, err := target.UploadPart(upload)
