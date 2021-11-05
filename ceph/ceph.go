@@ -110,14 +110,14 @@ func ListObjects(cephClient *s3.S3, bucket string) ([]*s3.Object, error) {
 	return objects.Contents, nil
 }
 
-func UploadBySize(cephClient *s3.S3, key string, size int64, bucket string, body []byte, ctx context.Context) error {
+func UploadBySize(source *s3.S3, target *s3.S3, key string, size int64, bucket string, body []byte, ctx context.Context) error {
 	if size <= SIZE {
 		input := &s3.PutObjectInput{
 			Bucket: aws.String(bucket),
 			Key:    aws.String(key),
 			Body:   bytes.NewReader(body),
 		}
-		_, err := cephClient.PutObject(input)
+		_, err := target.PutObject(input)
 		if err != nil {
 			fmt.Printf("%v无法上传，err=%v\n", key, err.Error())
 			return err
@@ -130,7 +130,7 @@ func UploadBySize(cephClient *s3.S3, key string, size int64, bucket string, body
 			Bucket: aws.String(bucket),
 			Key:    aws.String(key),
 		}
-		out, err := cephClient.CreateMultipartUpload(input)
+		out, err := target.CreateMultipartUpload(input)
 		if err != nil {
 			fmt.Printf("无法初始化上传，err=%v\n", err.Error())
 		}
@@ -146,7 +146,7 @@ func UploadBySize(cephClient *s3.S3, key string, size int64, bucket string, body
 						Key:      aws.String(key),
 						UploadId: out.UploadId,
 					}
-					_, err := cephClient.AbortMultipartUpload(abortInputs)
+					_, err := target.AbortMultipartUpload(abortInputs)
 					if err != nil {
 						fmt.Printf("%v无法取消上传,err=%v\n", key, err.Error())
 					}
@@ -177,7 +177,7 @@ func UploadBySize(cephClient *s3.S3, key string, size int64, bucket string, body
 				ContentLength: aws.Int64(partSize),
 			}
 
-			partUploadRes, err := cephClient.UploadPart(upload)
+			partUploadRes, err := target.UploadPart(upload)
 			if err != nil {
 				return err
 			}
@@ -199,7 +199,7 @@ func UploadBySize(cephClient *s3.S3, key string, size int64, bucket string, body
 			UploadId:        out.UploadId,
 		}
 
-		_, err = cephClient.CompleteMultipartUpload(cinput)
+		_, err = target.CompleteMultipartUpload(cinput)
 		if err != nil {
 			fmt.Printf("%v无法分段上传,err =%v\n", key, err.Error())
 			abortInputs := &s3.AbortMultipartUploadInput{
@@ -207,7 +207,7 @@ func UploadBySize(cephClient *s3.S3, key string, size int64, bucket string, body
 				Key:      aws.String(key),
 				UploadId: out.UploadId,
 			}
-			_, errAbort := cephClient.AbortMultipartUpload(abortInputs)
+			_, errAbort := target.AbortMultipartUpload(abortInputs)
 			if errAbort != nil {
 				fmt.Printf("%v无法取消上传,err =%v\n", key, errAbort.Error())
 				return errAbort
@@ -218,7 +218,7 @@ func UploadBySize(cephClient *s3.S3, key string, size int64, bucket string, body
 		syncChan <- struct{}{}
 		return nil
 	} else {
-		err := UploadGiantFile(cephClient, key, size, bucket, ctx)
+		err := UploadGiantFile(source, target, key, size, bucket, ctx)
 		if err != nil {
 			fmt.Printf("无法上传%v,err = %v\n", key, err.Error())
 			return err
@@ -247,14 +247,14 @@ func GetObject(cephClient *s3.S3, key string, bucket string) ([]byte, error) {
 }
 
 //UploadGiantFile 多线程迁移大文件
-func UploadGiantFile(cephClient *s3.S3, key string, size int64, bucket string, ctx context.Context) error {
+func UploadGiantFile(source *s3.S3, target *s3.S3, key string, size int64, bucket string, ctx context.Context) error {
 	syncChan := make(chan struct{}, 1)
 
 	input := &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	}
-	out, err := cephClient.CreateMultipartUpload(input)
+	out, err := target.CreateMultipartUpload(input)
 	if err != nil {
 		fmt.Printf("无法初始化上传，err=%v\n", err.Error())
 	}
@@ -270,7 +270,7 @@ func UploadGiantFile(cephClient *s3.S3, key string, size int64, bucket string, c
 					Key:      aws.String(key),
 					UploadId: out.UploadId,
 				}
-				_, err := cephClient.AbortMultipartUpload(abortInputs)
+				_, err := target.AbortMultipartUpload(abortInputs)
 				if err != nil {
 					fmt.Printf("%v无法取消上传,err=%v\n", key, err.Error())
 				}
@@ -293,7 +293,7 @@ func UploadGiantFile(cephClient *s3.S3, key string, size int64, bucket string, c
 		}
 
 		//一部分一部分的进行获取
-		body, err := GetPartFile(cephClient, key, bucket, cur, cur+partSize)
+		body, err := GetPartFile(source, key, bucket, cur, cur+partSize)
 		if err != nil {
 			fmt.Printf("无法获取到%v中的%v-%v的部分\n", key, cur, cur+partSize)
 			return err
@@ -308,7 +308,7 @@ func UploadGiantFile(cephClient *s3.S3, key string, size int64, bucket string, c
 			ContentLength: aws.Int64(partSize),
 		}
 
-		partUploadRes, err := cephClient.UploadPart(upload)
+		partUploadRes, err := target.UploadPart(upload)
 		if err != nil {
 			return err
 		}
@@ -330,7 +330,7 @@ func UploadGiantFile(cephClient *s3.S3, key string, size int64, bucket string, c
 		UploadId:        out.UploadId,
 	}
 
-	_, err = cephClient.CompleteMultipartUpload(cinput)
+	_, err = target.CompleteMultipartUpload(cinput)
 	if err != nil {
 		fmt.Printf("%v无法分段上传,err =%v\n", key, err.Error())
 		abortInputs := &s3.AbortMultipartUploadInput{
@@ -338,7 +338,7 @@ func UploadGiantFile(cephClient *s3.S3, key string, size int64, bucket string, c
 			Key:      aws.String(key),
 			UploadId: out.UploadId,
 		}
-		_, errAbort := cephClient.AbortMultipartUpload(abortInputs)
+		_, errAbort := target.AbortMultipartUpload(abortInputs)
 		if errAbort != nil {
 			fmt.Printf("%v无法取消上传,err =%v\n", key, errAbort.Error())
 			return errAbort
@@ -407,7 +407,7 @@ func TransferBucket(sourceCephInfo, targetCephInfo *model.CephInfo, sourceBucket
 					return err
 				}
 
-				err = UploadBySize(tClient, *obj.Key, *obj.Size, targetBucket, body, ctx)
+				err = UploadBySize(sClient, tClient, *obj.Key, *obj.Size, targetBucket, body, ctx)
 				if err != nil {
 					return err
 				}
